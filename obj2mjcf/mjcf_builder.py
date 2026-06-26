@@ -1,70 +1,47 @@
 import logging
 from pathlib import Path
-from typing import Any, List, Union
+from typing import List, Optional
 
 import mujoco
-import numpy as np
-import trimesh
 from lxml import etree
 from termcolor import cprint
 
 from obj2mjcf import constants
-from obj2mjcf.material import Material
+from obj2mjcf.asset import EmitOpts, ProcessedAsset
+from obj2mjcf.emitters import collision_color
 
 
 class MJCFBuilder:
-    """Builds a MuJoCo XML model from a mesh and materials."""
+    """Builds a MuJoCo XML model from a :class:`ProcessedAsset`."""
 
-    def __init__(
-        self,
-        filename: Path,
-        mesh: Union[trimesh.base.Trimesh, Any],
-        materials: List[Material],
-        work_dir: Path = Path(),
-        decomp_success: bool = False,
-    ):
-        self.filename = filename
-        self.mesh = mesh
-        self.materials = materials
-        self.decomp_success = decomp_success
+    format = "mjcf"
 
-        self.work_dir = work_dir
-        if self.work_dir == Path():
-            self.work_dir = filename.parent / filename.stem
+    def __init__(self, asset: ProcessedAsset, opts: Optional[EmitOpts] = None):
+        self.asset = asset
+        self.opts = opts or EmitOpts()
+        self.tree: Optional[etree._ElementTree] = None
 
-        self.tree = None
-
-    def add_visual_and_collision_default_classes(
-        self,
-        root: etree.Element,
-    ):
-        # Define the default element.
+    # ------------------------------------------------------------------ build
+    def _add_default_classes(self, root: etree.Element) -> None:
         default_elem = etree.SubElement(root, "default")
-
-        # Define visual defaults.
-        visual_default_elem = etree.SubElement(default_elem, "default")
-        visual_default_elem.attrib["class"] = "visual"
+        visual_default = etree.SubElement(default_elem, "default")
+        visual_default.attrib["class"] = "visual"
         etree.SubElement(
-            visual_default_elem,
+            visual_default,
             "geom",
             group="2",
             type="mesh",
             contype="0",
             conaffinity="0",
         )
+        collision_default = etree.SubElement(default_elem, "default")
+        collision_default.attrib["class"] = "collision"
+        etree.SubElement(collision_default, "geom", group="3", type="mesh")
 
-        # Define collision defaults.
-        collision_default_elem = etree.SubElement(default_elem, "default")
-        collision_default_elem.attrib["class"] = "collision"
-        etree.SubElement(collision_default_elem, "geom", group="3", type="mesh")
-
-    def add_assets(self, root: etree.Element, mtls: List[Material]) -> etree.Element:
-        # Define the assets element.
+    def _add_assets(self, root: etree.Element) -> etree.Element:
         asset_elem = etree.SubElement(root, "asset")
-
-        for material in mtls:
+        for material in self.asset.materials:
             if material.map_Kd is not None:
-                # Create the texture asset.
                 texture = Path(material.map_Kd)
                 etree.SubElement(
                     asset_elem,
@@ -73,8 +50,7 @@ class MJCFBuilder:
                     name=texture.stem,
                     file=texture.name,
                 )
-                # Reference the texture asset in a material asset.
-                etree.SubElement(
+                mat = etree.SubElement(
                     asset_elem,
                     "material",
                     name=material.name,
@@ -83,7 +59,7 @@ class MJCFBuilder:
                     shininess=material.mjcf_shininess(),
                 )
             else:
-                etree.SubElement(
+                mat = etree.SubElement(
                     asset_elem,
                     "material",
                     name=material.name,
@@ -91,166 +67,86 @@ class MJCFBuilder:
                     shininess=material.mjcf_shininess(),
                     rgba=material.mjcf_rgba(),
                 )
-
+            metallic = material.mjcf_metallic()
+            if metallic is not None:
+                mat.attrib["metallic"] = metallic
+            roughness = material.mjcf_roughness()
+            if roughness is not None:
+                mat.attrib["roughness"] = roughness
         return asset_elem
 
-    def add_visual_geometries(
-        self,
-        obj_body: etree.Element,
-        asset_elem: etree.Element,
-    ):
-        # Constants
-        filename = self.filename
-        mesh = self.mesh
-        materials = self.materials
+    def _add_visual_geometries(
+        self, body: etree.Element, asset_elem: etree.Element
+    ) -> None:
+        process_mtl = self.asset.has_materials
+        for sm in self.asset.submeshes:
+            meshname = sm.obj_path.name
+            etree.SubElement(asset_elem, "mesh", file=Path(meshname).as_posix())
+            geom = etree.SubElement(body, "geom", mesh=Path(meshname).stem)
+            if process_mtl and sm.material_name is not None:
+                geom.attrib["material"] = sm.material_name
+            geom.attrib["class"] = "visual"
 
-        process_mtl = len(materials) > 0
-
-        # Add visual geometries to object body.
-        if isinstance(mesh, trimesh.base.Trimesh):
-            meshname = Path(f"{filename.stem}.obj")
-            # Add the mesh to assets.
-            etree.SubElement(asset_elem, "mesh", file=meshname.as_posix())
-            # Add the geom to the worldbody.
-            if process_mtl:
-                e_ = etree.SubElement(
-                    obj_body,
-                    "geom",
-                    material=materials[0].name,
-                    mesh=meshname.stem,
-                )
-                e_.attrib["class"] = "visual"
-            else:
-                e_ = etree.SubElement(obj_body, "geom", mesh=meshname.stem)
-                e_.attrib["class"] = "visual"
-        else:
-            for i, (name, geom) in enumerate(mesh.geometry.items()):
-                meshname = Path(f"{filename.stem}_{i}.obj")
-                # Add the mesh to assets.
-                etree.SubElement(asset_elem, "mesh", file=meshname.as_posix())
-                # Add the geom to the worldbody.
-                if process_mtl:
-                    e_ = etree.SubElement(
-                        obj_body, "geom", mesh=meshname.stem, material=name
-                    )
-                    e_.attrib["class"] = "visual"
-                else:
-                    e_ = etree.SubElement(obj_body, "geom", mesh=meshname.stem)
-                    e_.attrib["class"] = "visual"
-
-    def add_collision_geometries(
-        self,
-        obj_body: etree.Element,
-        asset_elem: etree.Element,
-    ):
-        # Constants.
-        filename = self.filename
-        mesh = self.mesh
-        decomp_success = self.decomp_success
-
-        work_dir = self.work_dir
-
-        if decomp_success:
-            # Find collision files from the decomposed convex hulls.
-            collisions = [
-                x
-                for x in work_dir.glob("**/*")
-                if x.is_file() and "collision" in x.name
-            ]
-            collisions.sort(key=lambda x: int(x.stem.split("_")[-1]))
-
-            for collision in collisions:
+    def _add_collision_geometries(
+        self, body: etree.Element, asset_elem: etree.Element
+    ) -> None:
+        if self.asset.decomp_success and self.asset.collision_parts:
+            collisions = sorted(
+                self.asset.collision_parts,
+                key=lambda x: int(x.stem.split("_")[-1]),
+            )
+            for i, collision in enumerate(collisions):
                 etree.SubElement(asset_elem, "mesh", file=collision.name)
-                rgb = np.random.rand(3)  # Generate random color for collision meshes.
-                e_ = etree.SubElement(
-                    obj_body,
+                r, g, b = collision_color(i)
+                geom = etree.SubElement(
+                    body,
                     "geom",
                     mesh=collision.stem,
-                    rgba=f"{rgb[0]} {rgb[1]} {rgb[2]} 1",
+                    rgba=f"{r} {g} {b} 1",
                 )
-                e_.attrib["class"] = "collision"
+                geom.attrib["class"] = "collision"
         else:
-            # If no decomposed convex hulls were created, use the original mesh as the
-            # collision mesh.
-            if isinstance(mesh, trimesh.base.Trimesh):
-                meshname = Path(f"{filename.stem}.obj")
-                e_ = etree.SubElement(obj_body, "geom", mesh=meshname.stem)
-                e_.attrib["class"] = "collision"
-            else:
-                for i, (name, geom) in enumerate(mesh.geometry.items()):
-                    meshname = Path(f"{filename.stem}_{i}.obj")
-                    e_ = etree.SubElement(obj_body, "geom", mesh=meshname.stem)
-                    e_.attrib["class"] = "collision"
+            for sm in self.asset.submeshes:
+                geom = etree.SubElement(body, "geom", mesh=sm.obj_path.stem)
+                geom.attrib["class"] = "collision"
 
-    def build(
-        self,
-        add_free_joint: bool = False,
-    ) -> None:
-        # Constants.
-        filename = self.filename
-        mtls = self.materials
-
-        # Start assembling xml tree.
-        root = etree.Element("mujoco", model=filename.stem)
-
-        # Add defaults.
-        self.add_visual_and_collision_default_classes(root)
-
-        # Add assets.
-        asset_elem = self.add_assets(root, mtls)
-
-        # Add worldbody.
-        worldbody_elem = etree.SubElement(root, "worldbody")
-        obj_body = etree.SubElement(worldbody_elem, "body", name=filename.stem)
-        if add_free_joint:
-            etree.SubElement(obj_body, "freejoint")
-
-        # Add visual and collision geometries to object body.
-        self.add_visual_geometries(obj_body, asset_elem)
-        self.add_collision_geometries(obj_body, asset_elem)
-
-        # Create the tree.
+    def build(self) -> "MJCFBuilder":
+        root = etree.Element("mujoco", model=self.asset.name)
+        self._add_default_classes(root)
+        asset_elem = self._add_assets(root)
+        worldbody = etree.SubElement(root, "worldbody")
+        body = etree.SubElement(worldbody, "body", name=self.asset.name)
+        if self.opts.add_free_joint:
+            etree.SubElement(body, "freejoint")
+        self._add_visual_geometries(body, asset_elem)
+        self._add_collision_geometries(body, asset_elem)
         tree = etree.ElementTree(root)
         etree.indent(tree, space=constants.XML_INDENTATION, level=0)
         self.tree = tree
+        return self
 
-    def compile_model(self):
-        # Constants.
-        filename = self.filename
-        work_dir = self.work_dir
+    # -------------------------------------------------------------- save/check
+    def save(self) -> List[Path]:
+        if self.tree is None:
+            self.build()
+        xml_path = self.asset.work_dir / f"{self.asset.name}.xml"
+        assert self.tree is not None
+        self.tree.write(xml_path.as_posix(), encoding="utf-8")
+        logging.info(f"Saved MJCF to {xml_path}")
+        return [xml_path]
 
-        # Pull up tree if possible.
-        tree = self.tree
-        if tree is None:
-            raise ValueError("Tree has not been defined yet.")
-
-        # Create the work directory if it does not exist.
+    def validate(self) -> None:
+        """Compile and step the model; raises on any MuJoCo error."""
+        if self.tree is None:
+            self.build()
+        assert self.tree is not None
+        tmp_path = self.asset.work_dir / "tmp.xml"
         try:
-            tmp_path = work_dir / "tmp.xml"
-            tree.write(tmp_path, encoding="utf-8")
+            self.tree.write(tmp_path, encoding="utf-8")
             model = mujoco.MjModel.from_xml_path(tmp_path.as_posix())
             data = mujoco.MjData(model)
             mujoco.mj_step(model, data)
-            cprint(f"{filename} compiled successfully!", "green")
-        except Exception as e:
-            cprint(f"Error compiling model: {e}", "red")
+            cprint(f"{self.asset.name} (mjcf) compiled successfully!", "green")
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
-
-    def save_mjcf(
-        self,
-    ):
-        # Constants.
-        filename = self.filename
-        work_dir = self.work_dir
-
-        # Pull up tree if possible.
-        tree = self.tree
-        if tree is None:
-            raise ValueError("Tree has not been defined yet.")
-
-        # Save the MJCF file.
-        xml_path = work_dir / f"{filename.stem}.xml"
-        tree.write(xml_path.as_posix(), encoding="utf-8")
-        logging.info(f"Saved MJCF to {xml_path}")

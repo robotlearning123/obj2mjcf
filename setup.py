@@ -25,14 +25,23 @@ core_requirements = [
     "mujoco>=2.2.0",
     "tyro>=0.3.22",
     "numpy",
+    "scipy>=1.9.0",
     "termcolor>=2.0.1",
     "lxml>=4.9.1",
     "coacd>=1.0.0",
 ]
 
-testing_requirements = [
-    "pytest",
-] + core_requirements
+usd_requirements = [
+    "usd-core>=24.0",
+]
+
+testing_requirements = (
+    [
+        "pytest",
+    ]
+    + core_requirements
+    + usd_requirements
+)
 
 dev_requirements = [
     "black",
@@ -80,6 +89,7 @@ setup(
     python_requires=">=3.8",
     install_requires=core_requirements,
     extras_require={
+        "usd": usd_requirements,
         "testing": testing_requirements,
         "test": testing_requirements,
         "dev": dev_requirements,
