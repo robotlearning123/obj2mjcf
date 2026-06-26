@@ -1,6 +1,6 @@
-from itertools import product
 import pathlib
 import subprocess
+from itertools import product
 
 from obj2mjcf import cli
 
@@ -45,10 +45,10 @@ def test_parse_mtl_line() -> None:
         assert result == file_name, result
 
     for line in (
-            "a",
-            "a # b",
-            "mtllib a.what",
-            "a.mtl",
+        "a",
+        "a # b",
+        "mtllib a.what",
+        "a.mtl",
     ):
         result = cli.parse_mtl_name(iter([line]))
         assert result is None, result
