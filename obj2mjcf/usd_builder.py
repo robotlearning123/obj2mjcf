@@ -20,6 +20,16 @@ def _valid(name: str) -> str:
     return Tf.MakeValidIdentifier(name)
 
 
+def _unique(name: str, used: set) -> str:
+    """Disambiguate names that collide after sanitization (e.g. 'm 1' and 'm-1')."""
+    candidate, i = name, 1
+    while candidate in used:
+        candidate = f"{name}_{i}"
+        i += 1
+    used.add(candidate)
+    return candidate
+
+
 class USDBuilder:
     """Builds a self-contained USD stage from a :class:`ProcessedAsset`.
 
@@ -50,9 +60,11 @@ class USDBuilder:
         mat_prims: Dict[str, UsdShade.Material] = {}
         if self.asset.materials:
             UsdGeom.Scope.Define(stage, f"/{root_name}/Looks")
+            used_names: set = set()
             for material in self.asset.materials:
+                unique = _unique(_valid(material.name), used_names)
                 mat_prims[material.name] = self._build_material(
-                    stage, root_name, material
+                    stage, root_name, material, unique
                 )
 
         UsdGeom.Scope.Define(stage, f"/{root_name}/Geom")
@@ -114,11 +126,10 @@ class USDBuilder:
 
     # --------------------------------------------------------------- material
     def _build_material(
-        self, stage, root_name, material: Material
+        self, stage, root_name, material: Material, prim_name: str
     ) -> UsdShade.Material:
         surf = material.usd_preview_surface()
-        mat_name = _valid(material.name)
-        mat_path = f"/{root_name}/Looks/{mat_name}"
+        mat_path = f"/{root_name}/Looks/{prim_name}"
         mat = UsdShade.Material.Define(stage, mat_path)
         shader = UsdShade.Shader.Define(stage, f"{mat_path}/Shader")
         shader.CreateIdAttr("UsdPreviewSurface")

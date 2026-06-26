@@ -61,6 +61,12 @@ def test_usd_preview_surface_specular_workflow() -> None:
     assert surf.specular_color == (0.8, 0.8, 0.8)
 
 
+def test_metallic_map_disables_specular_workflow() -> None:
+    # A metallic texture (without a scalar Pm) still means metallic workflow.
+    m = Material(name="m", Ks="0.8 0.8 0.8", map_Pm="metal.png")
+    assert m.usd_preview_surface().use_specular_workflow is False
+
+
 def test_opacity_from_tr() -> None:
     m = Material(name="m", Tr="0.25")
     assert math.isclose(m.usd_opacity(), 0.75)

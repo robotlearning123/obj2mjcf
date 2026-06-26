@@ -186,3 +186,35 @@ def test_usd_pbr_material_and_textures(tmp_path) -> None:
     # Mesh bound to the material.
     binding = UsdShade.MaterialBindingAPI(stage.GetPrimAtPath("/box/Geom/box"))
     assert binding.GetDirectBindingRel().GetTargets()
+
+
+def test_colliding_material_names_stay_distinct(tmp_path) -> None:
+    # 'steel a' and 'steel-a' both sanitize to 'steel_a' -> must not clobber each other.
+    asset = ProcessedAsset(
+        name="part",
+        work_dir=tmp_path,
+        submeshes=[
+            SubMesh(tmp_path / "part_0.obj", trimesh.creation.box(), "steel a"),
+            SubMesh(tmp_path / "part_1.obj", trimesh.creation.box(), "steel-a"),
+        ],
+        materials=[
+            Material(name="steel a", Kd="1 0 0"),
+            Material(name="steel-a", Kd="0 1 0"),
+        ],
+    )
+    builder = USDBuilder(asset, EmitOpts(usd_binary=False))
+    builder.build()
+    paths = builder.save()
+    builder.validate()
+    stage = _open(paths[0])
+    looks = stage.GetPrimAtPath("/part/Looks")
+    materials = [p for p in looks.GetChildren() if p.IsA(UsdShade.Material)]
+    assert len(materials) == 2  # both materials survive as distinct prims
+    # The two meshes bind to two different materials.
+    targets = set()
+    for stem in ("part_0", "part_1"):
+        binding = UsdShade.MaterialBindingAPI(stage.GetPrimAtPath(f"/part/Geom/{stem}"))
+        rel = binding.GetDirectBindingRel().GetTargets()
+        assert rel
+        targets.add(str(rel[0]))
+    assert len(targets) == 2

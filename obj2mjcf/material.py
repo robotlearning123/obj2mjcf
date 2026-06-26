@@ -130,9 +130,10 @@ class Material:
         metallic = (
             float(self.Pm) if self.Pm is not None else constants.USD_DEFAULT_METALLIC
         )
-        # Use the specular workflow only when no metallic factor is given and a specular
-        # color is available; otherwise use the (default) metallic workflow.
-        use_spec = self.Pm is None and self.Ks is not None
+        # Use the specular workflow only when there is no metallic input at all (neither a
+        # scalar Pm nor a metallic map) and a specular color is available; otherwise use the
+        # (default) metallic workflow.
+        use_spec = self.Pm is None and self.map_Pm is None and self.Ks is not None
         textures = {}
         if self.map_Kd is not None:
             textures["diffuseColor"] = self.map_Kd

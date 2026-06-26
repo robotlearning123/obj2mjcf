@@ -7,7 +7,7 @@ import shutil
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Union
 
 import trimesh
 import tyro
@@ -191,6 +191,9 @@ def _build_asset(
     meters_per_unit: float,
     up_axis: str,
 ) -> ProcessedAsset:
+    if up_axis.upper() not in ("Z", "Y"):
+        raise ValueError(f"up_axis must be 'Z' or 'Y', got {up_axis!r}")
+
     collision_parts: List[Path] = []
     if decompose:
         collision_parts = decompose_convex(filename, work_dir, coacd_args)
@@ -288,16 +291,30 @@ def _emit(
     return produced
 
 
-def _parse_formats(export: Optional[str]) -> List[str]:
-    if not export:
-        return []
-    formats = [f.strip() for f in export.split(",") if f.strip()]
+def _validate_formats(formats: List[str]) -> List[str]:
     unknown = [f for f in formats if f not in AVAILABLE_FORMATS]
     if unknown:
         raise ValueError(
             f"Unknown export format(s): {unknown}. Available: {list(AVAILABLE_FORMATS)}"
         )
     return formats
+
+
+def _parse_formats(export: Optional[str]) -> List[str]:
+    """Parse the CLI ``--export`` comma string into validated format names."""
+    if not export:
+        return []
+    return _validate_formats([f.strip() for f in export.split(",") if f.strip()])
+
+
+def _normalize_formats(export: Union[str, Sequence[str]]) -> List[str]:
+    """Normalize the library ``export=`` argument (a single str is one format).
+
+    Guards the silent-empty-output footgun where ``export="usd"`` would otherwise
+    iterate into characters and match no format.
+    """
+    formats = [export] if isinstance(export, str) else list(export)
+    return _validate_formats(formats)
 
 
 def process_obj(filename: Path, args: Args) -> Dict[str, List[Path]]:
@@ -337,7 +354,7 @@ def process_obj(filename: Path, args: Args) -> Dict[str, List[Path]]:
 def convert(
     obj_path,
     *,
-    export: Sequence[str] = ("mjcf",),
+    export: Union[str, Sequence[str]] = ("mjcf",),
     decompose: bool = False,
     coacd_args: Optional[CoacdArgs] = None,
     texture_resize_percent: float = 1.0,
@@ -354,6 +371,7 @@ def convert(
 
     Returns a mapping of format name to the list of files written.
     """
+    formats = _normalize_formats(export)  # validate before any side effects
     filename = Path(obj_path)
     work_dir = _prepare_work_dir(filename, overwrite)
     if work_dir is None:
@@ -373,7 +391,7 @@ def convert(
         density=density,
         usd_binary=usd_binary,
     )
-    return _emit(asset, list(export), validate, emit_opts)
+    return _emit(asset, formats, validate, emit_opts)
 
 
 def main() -> None:
