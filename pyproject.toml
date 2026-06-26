@@ -9,3 +9,8 @@ ignore_missing_imports = true
 extend-exclude = ["third_party", "dist", "build"]
 lint.select = ["E", "F", "I", "W"]
 lint.ignore = ["E501"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: integration tests requiring heavy/optional deps (e.g. Newton/Warp/Isaac)",
+]
