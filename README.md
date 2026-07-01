@@ -34,12 +34,58 @@ The recommended way to install this package is via [PyPI](https://pypi.org/proje
 pip install --upgrade obj2mjcf
 ```
 
+For USD export (geometry + `UsdPreviewSurface` materials + optional `UsdPhysics`), install
+the `usd` extra:
+
+```bash
+pip install --upgrade "obj2mjcf[usd]"
+```
+
 ## Usage
 
 Type the following at the command line for a detailed description of available options:
 
 ```bash
 obj2mjcf --help
+```
+
+### Output formats
+
+`--export` selects the formats to write (`mjcf`, `usd`, or both). `--save-mjcf` remains a
+shorthand for `--export mjcf`.
+
+```bash
+# MuJoCo XML (unchanged default behavior)
+obj2mjcf --obj-dir model/ --save-mjcf
+
+# USD only
+obj2mjcf --obj-dir model/ --export usd
+
+# Both, with a physics-ready USD (rigid body + convex-decomposition collision + mass)
+obj2mjcf --obj-dir model/ --export mjcf,usd --decompose \
+         --usd-physics --add-free-joint --density 500
+```
+
+USD output is a self-contained stage (geometry baked from the mesh) with
+`UsdPreviewSurface` materials, `metersPerUnit`/`upAxis` metadata, and — with `--usd-physics` —
+`UsdPhysics` rigid-body/collision/mass schemas. It loads directly in OpenUSD tooling and
+NVIDIA Isaac Sim / Newton (`ModelBuilder.add_usd(...)`). Materials understand the common PBR
+MTL extensions (`Pr`/`Pm`/`Ke`, normal/roughness/metallic maps) in addition to the classic
+Phong fields. Use `--usd-ascii` to write `.usda` instead of binary `.usdc`.
+
+### Library API
+
+```python
+from obj2mjcf import convert
+
+produced = convert(
+    "model/part.obj",
+    export=("mjcf", "usd"),
+    usd_physics=True,
+    add_free_joint=True,
+    density=500.0,
+)
+# -> {"mjcf": [Path(".../part.xml")], "usd": [Path(".../part.usdc")]}
 ```
 
 [OBJ]: https://en.wikipedia.org/wiki/Wavefront_.obj_file
