@@ -50,6 +50,7 @@ def test_usd_geometry_parity(tmp_path) -> None:
     out = convert(obj, export=("usd",), usd_binary=False)
     stage = _open(out["usd"][0])
     src = trimesh.load(obj.as_posix(), force="mesh")
+    assert isinstance(src, trimesh.Trimesh)
     total_pts = sum(
         len(UsdGeom.Mesh(p).GetPointsAttr().Get())
         for p in stage.Traverse()
