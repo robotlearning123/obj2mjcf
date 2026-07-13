@@ -194,6 +194,9 @@ class USDBuilder:
                 out = tex.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
                 in_type = Sdf.ValueTypeNames.Normal3f
             else:  # scalar channels: roughness, metallic, opacity
+                # Non-color data must be read raw; the default "auto" marks 8-bit
+                # 3/4-channel textures as sRGB and would gamma-decode linear values.
+                tex.CreateInput("sourceColorSpace", Sdf.ValueTypeNames.Token).Set("raw")
                 out = tex.CreateOutput("r", Sdf.ValueTypeNames.Float)
                 in_type = Sdf.ValueTypeNames.Float
             shader.CreateInput(input_name, in_type).ConnectToSource(out)

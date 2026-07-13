@@ -189,6 +189,47 @@ def test_usd_pbr_material_and_textures(tmp_path) -> None:
     assert binding.GetDirectBindingRel().GetTargets()
 
 
+def test_data_maps_use_raw_colorspace(tmp_path) -> None:
+    # Non-color maps (roughness/metallic/opacity/normal) must be read raw, not sRGB.
+    # UsdUVTexture default sourceColorSpace is "auto", which marks 8-bit 3/4-channel
+    # textures as sRGB and would gamma-decode linear data. Color maps stay non-raw.
+    box = trimesh.creation.box()
+    for n in ("albedo", "rough", "metal", "op", "nrm"):
+        _write_png(tmp_path / f"{n}.png")
+    mat = Material(
+        name="steel",
+        Kd="0.2 0.2 0.22",
+        map_Kd="albedo.png",
+        map_Pr="rough.png",
+        map_Pm="metal.png",
+        map_d="op.png",
+        map_norm="nrm.png",
+    )
+    asset = ProcessedAsset(
+        name="box",
+        work_dir=tmp_path,
+        submeshes=[SubMesh(tmp_path / "box.obj", box, "steel")],
+        materials=[mat],
+    )
+    builder = USDBuilder(asset, EmitOpts(usd_binary=False))
+    builder.build()
+    stage = _open(builder.save()[0])
+
+    def _cs(tex_name: str):
+        shader = UsdShade.Shader(
+            stage.GetPrimAtPath(f"/box/Looks/steel/{tex_name}_tex")
+        )
+        inp = shader.GetInput("sourceColorSpace")
+        return inp.Get() if inp else None
+
+    assert _cs("roughness") == "raw"
+    assert _cs("metallic") == "raw"
+    assert _cs("opacity") == "raw"
+    assert _cs("normal") == "raw"
+    # Color data keeps default (auto/sRGB), not raw.
+    assert _cs("diffuseColor") != "raw"
+
+
 def test_colliding_material_names_stay_distinct(tmp_path) -> None:
     # 'steel a' and 'steel-a' both sanitize to 'steel_a' -> must not clobber each other.
     asset = ProcessedAsset(
