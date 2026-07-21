@@ -267,13 +267,27 @@ class USDBuilder:
                 raise RuntimeError(f"Mesh {prim.GetPath()} has no points")
             if idx and max(idx) >= len(pts):
                 raise RuntimeError(f"Mesh {prim.GetPath()} has out-of-range face index")
-        with warnings.catch_warnings():
-            # ComplianceChecker is deprecated in newer USD but remains the portable
-            # check across the usd-core versions we support (>=24.0).
-            warnings.simplefilter("ignore", DeprecationWarning)
-            checker = UsdUtils.ComplianceChecker()
-            checker.CheckCompliance(path.as_posix())
-        failed = list(checker.GetFailedChecks()) + list(checker.GetErrors())
+        if hasattr(UsdUtils, "ComplianceChecker"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                checker = UsdUtils.ComplianceChecker()
+                checker.CheckCompliance(path.as_posix())
+            failed = list(checker.GetFailedChecks()) + list(checker.GetErrors())
+        else:
+            # OpenUSD 26.08 replaced ComplianceChecker with UsdValidation.
+            from pxr import UsdValidation
+
+            metadata = [
+                item
+                for item in UsdValidation.ValidationRegistry().GetAllValidatorMetadata()
+                if item.name != "usdUtilsValidators:RootPackageValidator"
+            ]
+            errors = UsdValidation.ValidationContext(metadata=metadata).Validate(stage)
+            failed = [
+                error.GetErrorAsString()
+                for error in errors
+                if error.GetType() == UsdValidation.ValidationErrorType.Error
+            ]
         if failed:
             raise RuntimeError(f"USD compliance failed for {path}: {failed}")
         from termcolor import cprint
